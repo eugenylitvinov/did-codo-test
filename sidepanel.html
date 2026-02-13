@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Architecture Validation</title>
+  <title>Co-Doing API Test</title>
   <script src="https://www.gstatic.com/meetjs/addons/1.2.0/meet.addons.js"></script>
   <style>
     body {
@@ -15,6 +15,7 @@
       font-size: 14px;
     }
     h1 { font-size: 16px; color: #8888cc; }
+    h2 { font-size: 13px; color: #7777aa; margin: 16px 0 6px; }
     .status {
       margin: 8px 0;
       padding: 8px;
@@ -53,211 +54,355 @@
   </style>
 </head>
 <body>
-  <h1>Architecture Validation v2</h1>
+  <h1>Co-Doing API Test</h1>
 
   <div id="context" class="status info">Checking environment...</div>
 
   <div id="step1" class="status pending">1. createAddonSession — waiting...</div>
   <div id="step2" class="status pending">2. createSidePanelClient — waiting...</div>
-  <div id="stepB" class="status pending">B. getMeetingInfo — waiting...</div>
-  <div id="stepWS" class="status pending">WS. WebSocket connectivity — waiting...</div>
-  <div id="stepFB" class="status pending">FB. Firebase SDK load — waiting...</div>
+  <div id="step2b" class="status pending">2b. startCollaboration — waiting...</div>
+  <div id="step3" class="status pending">3. createCoDoingClient — waiting...</div>
+  <div id="step4" class="status pending">4. setGlobalState — waiting...</div>
+  <div id="step5" class="status pending">5. State received back — waiting...</div>
 
   <div style="margin-top: 12px;">
-    <button onclick="runAllTests()">Run All Tests</button>
+    <button onclick="runTest()">Run Full Test</button>
+    <button onclick="sendState()">Send State Update</button>
+  </div>
+
+  <h2>Architecture Tests</h2>
+  <div id="stepWS" class="status pending">WS. WebSocket connectivity — waiting...</div>
+  <div id="stepFB" class="status pending">FB. Firebase SDK — waiting...</div>
+  <div id="stepMI" class="status pending">MI. getMeetingInfo — waiting...</div>
+  <div style="margin-top: 8px;">
+    <button onclick="testWebSocketConnectivity()">Test WebSocket</button>
+    <button onclick="testFirebaseLoad()">Test Firebase</button>
+    <button onclick="testMeetingInfo()">Test getMeetingInfo</button>
   </div>
 
   <div id="log"></div>
 
   <script>
+    // ============================================================
+    // REPLACE THIS with your Google Cloud project number
+    // Find it: Google Cloud Console → Project Settings → Project number
+    // ============================================================
     const CLOUD_PROJECT_NUMBER = '1430218413';
 
     let session = null;
     let sidePanelClient = null;
+    let coDoingClient = null;
+    let stateVersion = 0;
 
-    function log(msg, type) {
-      type = type || 'info';
-      var el = document.getElementById('log');
-      var entry = document.createElement('div');
-      entry.className = 'log-entry log-' + type;
-      entry.textContent = '[' + new Date().toISOString().slice(11, 19) + '] ' + msg;
+    function log(msg, type = 'info') {
+      const el = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      entry.textContent = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
       el.appendChild(entry);
       el.scrollTop = el.scrollHeight;
+      console.log(`[${type}] ${msg}`);
     }
 
     function setStep(n, status, msg) {
-      var el = document.getElementById(n);
+      const el = document.getElementById(`step${n}`) || document.getElementById(n);
       if (el) {
-        el.className = 'status ' + status;
+        el.className = `status ${status}`;
         el.textContent = msg;
       }
     }
 
-    async function runAllTests() {
+    async function runTest() {
+      if (CLOUD_PROJECT_NUMBER === 'REPLACE_ME') {
+        log('ERROR: Replace CLOUD_PROJECT_NUMBER with your GCP project number!', 'fail');
+        setStep(1, 'fail', 'createAddonSession — missing project number');
+        return;
+      }
+
       // Step 1: Create addon session
-      if (!session) {
-        try {
-          log('Creating addon session...');
-          session = await window.meet.addon.createAddonSession({
-            cloudProjectNumber: CLOUD_PROJECT_NUMBER,
-          });
-          setStep('step1', 'ok', '1. createAddonSession — SUCCESS');
-          log('Session created', 'ok');
-        } catch (err) {
-          setStep('step1', 'fail', '1. createAddonSession — FAILED: ' + (err.message || err));
-          log('Session failed: ' + (err.message || err), 'fail');
-          return;
+      try {
+        log(`Creating addon session with project number: ${CLOUD_PROJECT_NUMBER}`);
+        session = await window.meet.addon.createAddonSession({
+          cloudProjectNumber: CLOUD_PROJECT_NUMBER,
+        });
+        setStep(1, 'ok', '1. createAddonSession — SUCCESS');
+        log('Addon session created', 'ok');
+
+        // Dump all available methods on the session object
+        const sessionMethods = [];
+        for (const key in session) {
+          sessionMethods.push(`${key}(${typeof session[key]})`);
         }
+        log('Session object has: ' + sessionMethods.join(', '), 'info');
+      } catch (err) {
+        setStep(1, 'fail', `1. createAddonSession — FAILED: ${err.message || err}`);
+        log(`Session creation failed: ${JSON.stringify(err)}`, 'fail');
+        log('If running outside Meet iframe, this is expected.', 'info');
+        return;
       }
 
       // Step 2: Create side panel client
-      if (!sidePanelClient) {
-        try {
-          sidePanelClient = await session.createSidePanelClient();
-          setStep('step2', 'ok', '2. createSidePanelClient — SUCCESS');
-          log('SidePanelClient created', 'ok');
+      try {
+        log('Creating side panel client...');
+        sidePanelClient = await session.createSidePanelClient();
+        setStep(2, 'ok', '2. createSidePanelClient — SUCCESS');
+        log('Side panel client created', 'ok');
 
-          var methods = [];
-          for (var key in sidePanelClient) {
-            methods.push(key + '(' + typeof sidePanelClient[key] + ')');
-          }
-          log('Methods: ' + methods.join(', '), 'info');
-        } catch (err) {
-          setStep('step2', 'fail', '2. createSidePanelClient — FAILED: ' + err.message);
-          log('SidePanelClient failed: ' + err.message, 'fail');
+        const spMethods = [];
+        for (const key in sidePanelClient) {
+          spMethods.push(`${key}(${typeof sidePanelClient[key]})`);
         }
+        log('SidePanelClient has: ' + spMethods.join(', '), 'info');
+      } catch (err) {
+        setStep(2, 'fail', `2. createSidePanelClient — FAILED: ${err.message || err}`);
+        log(`Side panel client failed: ${JSON.stringify(err)}`, 'fail');
       }
 
-      // Test B: getMeetingInfo
+      // Step 2b: Start collaboration (must happen BEFORE Co-Doing client)
       if (sidePanelClient) {
         try {
-          log('Calling getMeetingInfo()...');
-          if (typeof sidePanelClient.getMeetingInfo === 'function') {
-            var info = await sidePanelClient.getMeetingInfo();
-            log('getMeetingInfo returned: ' + JSON.stringify(info), 'ok');
-            var details = '';
-            for (var k in info) {
-              details += k + '=' + JSON.stringify(info[k]) + ' ';
-            }
-            setStep('stepB', 'ok', 'B. getMeetingInfo — ' + details);
+          log('Starting collaboration (opens side panel for all)...');
+          if (typeof sidePanelClient.startCollaboration === 'function') {
+            await sidePanelClient.startCollaboration({
+              sidePanelUrl: window.location.href,
+              additionalData: JSON.stringify({ test: true }),
+            });
+            setStep('2b', 'ok', '2b. startCollaboration — SUCCESS');
+            log('startCollaboration succeeded (current API)', 'ok');
+          } else if (typeof sidePanelClient.startActivity === 'function') {
+            await sidePanelClient.startActivity({
+              sidePanelUrl: window.location.href,
+              additionalData: JSON.stringify({ test: true }),
+            });
+            setStep('2b', 'ok', '2b. startActivity — SUCCESS (old API name)');
+            log('startActivity succeeded (old API name)', 'ok');
           } else {
-            log('getMeetingInfo not available on sidePanelClient', 'fail');
-            setStep('stepB', 'fail', 'B. getMeetingInfo — method not found');
-            // Check session
-            if (session && typeof session.getMeetingInfo === 'function') {
-              var info2 = await session.getMeetingInfo();
-              log('Found on session: ' + JSON.stringify(info2), 'ok');
-              setStep('stepB', 'ok', 'B. getMeetingInfo (session) — ' + JSON.stringify(info2));
-            }
+            log('Neither startCollaboration nor startActivity found!', 'fail');
+            setStep('2b', 'fail', '2b. No collaboration start method found');
           }
         } catch (err) {
-          setStep('stepB', 'fail', 'B. getMeetingInfo — FAILED: ' + err.message);
-          log('getMeetingInfo error: ' + err.message, 'fail');
+          setStep('2b', 'fail', `2b. startCollaboration — FAILED: ${err.message || err}`);
+          log(`Collaboration start failed: ${JSON.stringify(err)}`, 'fail');
+          log('Continuing to Co-Doing test anyway...', 'info');
         }
       }
 
-      // Test WS: WebSocket connectivity
+      // Step 3: Create Co-Doing client (THE critical test)
       try {
-        log('Testing WebSocket to wss://ws.postman-echo.com/raw ...');
-        var wsResult = await testWebSocket('wss://ws.postman-echo.com/raw');
-        setStep('stepWS', 'ok', 'WS. WebSocket — SUCCESS: ' + wsResult);
-        log('WebSocket works: ' + wsResult, 'ok');
+        log('Creating Co-Doing client...');
+        coDoingClient = await session.createCoDoingClient({
+          activityTitle: 'Co-Doing API Test',
+          onGlobalStateChanged: (state) => {
+            try {
+              const decoded = JSON.parse(new TextDecoder().decode(state.bytes));
+              setStep(5, 'ok', `5. State received — v${decoded.version}: "${decoded.message}"`);
+              log(`State received: ${JSON.stringify(decoded)}`, 'ok');
+            } catch (e) {
+              log(`State decode error: ${e.message}`, 'fail');
+            }
+          },
+        });
+        setStep(3, 'ok', '3. createCoDoingClient — SUCCESS');
+        log('Co-Doing client created! The API IS available.', 'ok');
+
+        const cdMethods = [];
+        for (const key in coDoingClient) {
+          cdMethods.push(`${key}(${typeof coDoingClient[key]})`);
+        }
+        log('CoDoingClient has: ' + cdMethods.join(', '), 'info');
+
+        // Auto-send first state update
+        log('Auto-sending first state update...', 'info');
+        await sendState();
+      } catch (err) {
+        setStep(3, 'fail', `3. createCoDoingClient — FAILED: ${err.message || err}`);
+        log(`Co-Doing client failed: ${JSON.stringify(err)}`, 'fail');
+        log('Error name: ' + (err.name || 'unknown'), 'fail');
+        log('Error code: ' + (err.code || 'unknown'), 'fail');
+        log('Error type: ' + (err.errorType || 'unknown'), 'fail');
+        log('Full error: ' + String(err), 'fail');
+
+        // Check if it's access restriction
+        const errStr = String(err).toLowerCase();
+        if (errStr.includes('early access') || errStr.includes('permission') || errStr.includes('restricted') || errStr.includes('not available')) {
+          log('>>> Co-Doing API appears RESTRICTED. Need WebSocket fallback. <<<', 'fail');
+        } else {
+          log('Error might be environment-related. Try from within Meet iframe.', 'info');
+        }
+
+        // Dump available session methods for debugging
+        log('Checking session for alternative APIs...', 'info');
+        for (const key in session) {
+          if (typeof session[key] === 'function' && key.toLowerCase().includes('co')) {
+            log(`  Found: session.${key}()`, 'info');
+          }
+        }
+        return;
+      }
+    }
+
+    async function sendState() {
+      if (!coDoingClient) {
+        log('Co-Doing client not initialized. Run test first.', 'fail');
+        return;
+      }
+
+      stateVersion++;
+      const state = {
+        version: stateVersion,
+        message: `Test state update #${stateVersion}`,
+        timestamp: Date.now(),
+      };
+
+      try {
+        log(`Sending state: ${JSON.stringify(state)}`);
+
+        // Try current API name
+        if (typeof coDoingClient.setGlobalState === 'function') {
+          await coDoingClient.setGlobalState({
+            bytes: new TextEncoder().encode(JSON.stringify(state)),
+          });
+          setStep(4, 'ok', `4. setGlobalState — SUCCESS (v${stateVersion})`);
+          log('setGlobalState succeeded', 'ok');
+        }
+        // Try old API name as fallback
+        else if (typeof coDoingClient.broadcastStateUpdate === 'function') {
+          await coDoingClient.broadcastStateUpdate({
+            bytes: new TextEncoder().encode(JSON.stringify(state)),
+          });
+          setStep(4, 'ok', `4. broadcastStateUpdate — SUCCESS (v${stateVersion})`);
+          log('broadcastStateUpdate succeeded (old API name)', 'ok');
+        }
+        else {
+          log('Neither setGlobalState nor broadcastStateUpdate found on client!', 'fail');
+          log('Available methods: ' + Object.keys(coDoingClient).join(', '), 'info');
+          setStep(4, 'fail', '4. No state update method found');
+        }
+      } catch (err) {
+        setStep(4, 'fail', `4. State update — FAILED: ${err.message || err}`);
+        log(`State update failed: ${JSON.stringify(err)}`, 'fail');
+      }
+    }
+
+    // ============================================================
+    // ARCHITECTURE VALIDATION TESTS (added below original tests)
+    // ============================================================
+
+    async function testWebSocketConnectivity() {
+      log('=== WebSocket Connectivity Test ===', 'info');
+      try {
+        log('Connecting to wss://ws.postman-echo.com/raw ...', 'info');
+        const result = await new Promise(function(resolve, reject) {
+          var timeout = setTimeout(function() { reject(new Error('timeout 5s')); }, 5000);
+          var ws = new WebSocket('wss://ws.postman-echo.com/raw');
+          ws.onopen = function() { log('WS connected', 'ok'); ws.send('ping-from-meet'); };
+          ws.onmessage = function(e) { clearTimeout(timeout); ws.close(); resolve(String(e.data).substring(0, 80)); };
+          ws.onerror = function() { clearTimeout(timeout); reject(new Error('WS connection error')); };
+          setTimeout(function() { if (ws.readyState === 1) { clearTimeout(timeout); ws.close(); resolve('connected (no echo)'); } }, 3000);
+        });
+        setStep('stepWS', 'ok', 'WS. WebSocket — SUCCESS: ' + result);
+        log('WebSocket works: ' + result, 'ok');
       } catch (err) {
         setStep('stepWS', 'fail', 'WS. WebSocket — BLOCKED: ' + err.message);
         log('WebSocket blocked: ' + err.message, 'fail');
       }
+    }
 
-      // Test FB: Firebase SDK load
+    async function testFirebaseLoad() {
+      log('=== Firebase SDK Load Test ===', 'info');
       try {
-        log('Loading Firebase SDK...');
-        await loadScript('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
+        log('Loading firebase-app-compat from CDN...', 'info');
+        await new Promise(function(resolve, reject) {
+          var s = document.createElement('script');
+          s.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js';
+          s.onload = resolve;
+          s.onerror = function() { reject(new Error('Script blocked')); };
+          document.head.appendChild(s);
+        });
         if (typeof firebase !== 'undefined') {
           setStep('stepFB', 'ok', 'FB. Firebase SDK — LOADED v' + (firebase.SDK_VERSION || '?'));
-          log('Firebase loaded: ' + (firebase.SDK_VERSION || '?'), 'ok');
-          await loadScript('https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js');
+          log('Firebase loaded: v' + (firebase.SDK_VERSION || '?'), 'ok');
+          // Also try loading database module
+          await new Promise(function(resolve, reject) {
+            var s = document.createElement('script');
+            s.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js';
+            s.onload = resolve;
+            s.onerror = function() { reject(new Error('DB module blocked')); };
+            document.head.appendChild(s);
+          });
           log('Firebase database module also loaded', 'ok');
         } else {
-          setStep('stepFB', 'fail', 'FB. Firebase SDK — global missing');
+          setStep('stepFB', 'fail', 'FB. Firebase — global missing');
         }
       } catch (err) {
-        setStep('stepFB', 'fail', 'FB. Firebase SDK — BLOCKED: ' + err.message);
+        setStep('stepFB', 'fail', 'FB. Firebase — BLOCKED: ' + err.message);
         log('Firebase load failed: ' + err.message, 'fail');
       }
-
-      log('=== All tests complete ===', 'ok');
     }
 
-    function testWebSocket(url) {
-      return new Promise(function(resolve, reject) {
-        var timeout = setTimeout(function() {
-          ws.close();
-          reject(new Error('timeout'));
-        }, 5000);
-
-        var ws;
-        try {
-          ws = new WebSocket(url);
-        } catch (err) {
-          clearTimeout(timeout);
-          reject(err);
-          return;
+    async function testMeetingInfo() {
+      log('=== getMeetingInfo Test ===', 'info');
+      if (!sidePanelClient) {
+        log('Need sidePanelClient — run main test first', 'fail');
+        setStep('stepMI', 'fail', 'MI. getMeetingInfo — run main test first');
+        return;
+      }
+      try {
+        if (typeof sidePanelClient.getMeetingInfo === 'function') {
+          var info = await sidePanelClient.getMeetingInfo();
+          log('getMeetingInfo: ' + JSON.stringify(info), 'ok');
+          var details = '';
+          for (var k in info) details += k + '=' + JSON.stringify(info[k]) + ' ';
+          setStep('stepMI', 'ok', 'MI. ' + details);
+        } else {
+          log('getMeetingInfo not on sidePanelClient', 'fail');
+          var methods = [];
+          for (var k in sidePanelClient) methods.push(k);
+          log('Available: ' + methods.join(', '), 'info');
+          setStep('stepMI', 'fail', 'MI. getMeetingInfo — not found');
         }
-
-        ws.onopen = function() {
-          log('WS connected', 'ok');
-          ws.send('ping-from-meet');
-        };
-
-        ws.onmessage = function(event) {
-          clearTimeout(timeout);
-          ws.close();
-          resolve(String(event.data).substring(0, 80));
-        };
-
-        ws.onerror = function() {
-          clearTimeout(timeout);
-          reject(new Error('WS error'));
-        };
-
-        setTimeout(function() {
-          if (ws.readyState === WebSocket.OPEN) {
-            clearTimeout(timeout);
-            ws.close();
-            resolve('connected (no echo)');
-          }
-        }, 3000);
-      });
+      } catch (err) {
+        setStep('stepMI', 'fail', 'MI. FAILED: ' + err.message);
+        log('getMeetingInfo error: ' + err.message, 'fail');
+      }
     }
 
-    function loadScript(src) {
-      return new Promise(function(resolve, reject) {
-        var script = document.createElement('script');
-        script.src = src;
-        script.onload = resolve;
-        script.onerror = function() { reject(new Error('Script blocked: ' + src)); };
-        document.head.appendChild(script);
-      });
-    }
-
-    // Auto-init
-    window.addEventListener('DOMContentLoaded', function() {
-      var contextEl = document.getElementById('context');
-      var inIframe = false;
-      try { inIframe = window.self !== window.top; } catch(e) { inIframe = true; }
-      var onMeetDomain = document.referrer.indexOf('meet.google.com') !== -1;
+    // Detect environment and log context
+    window.addEventListener('DOMContentLoaded', () => {
+      const contextEl = document.getElementById('context');
+      const inIframe = window.self !== window.top;
+      const onMeetDomain = document.referrer.includes('meet.google.com');
 
       if (inIframe && onMeetDomain) {
         contextEl.className = 'status ok';
-        contextEl.textContent = 'Running inside Google Meet iframe';
-        log('Environment: Meet iframe', 'ok');
-        runAllTests();
+        contextEl.textContent = 'Running inside Google Meet iframe — good';
+        log('Environment: Meet iframe (referrer: ' + document.referrer + ')', 'ok');
       } else if (inIframe) {
         contextEl.className = 'status info';
-        contextEl.textContent = 'In iframe (not Meet)';
+        contextEl.textContent = 'Running in iframe (not Meet) — SDK calls will fail';
+        log('Environment: iframe but NOT Meet (referrer: ' + document.referrer + ')', 'info');
       } else {
         contextEl.className = 'status info';
-        contextEl.textContent = 'Standalone — open from Meet to run SDK tests';
-        log('Standalone mode. Click button to run network-only tests.', 'info');
+        contextEl.textContent = 'Running standalone — SDK calls will fail (open from Meet)';
+        log('Environment: standalone browser tab. SDK needs Meet iframe.', 'info');
+      }
+
+      log('Page loaded. Checking SDK availability...');
+      if (window.meet && window.meet.addon) {
+        log('meet.addon is available', 'ok');
+        const addonKeys = Object.keys(window.meet.addon);
+        log('Available on meet.addon: ' + addonKeys.join(', '), 'info');
+
+        // Auto-run test when inside Meet iframe
+        if (inIframe) {
+          log('Auto-running test (Meet iframe detected)...', 'info');
+          runTest();
+        }
+      } else if (window.meet) {
+        log('meet object exists but meet.addon is missing', 'fail');
+        log('Available on meet: ' + Object.keys(window.meet).join(', '), 'info');
+      } else {
+        log('meet object NOT found — SDK script may have failed to load', 'fail');
       }
     });
   </script>
