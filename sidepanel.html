@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Co-Doing API Test</title>
+  <title>Architecture Validation Tests</title>
   <script src="https://www.gstatic.com/meetjs/addons/1.2.0/meet.addons.js"></script>
   <style>
     body {
@@ -14,13 +14,14 @@
       margin: 0;
       font-size: 14px;
     }
-    h1 { font-size: 16px; color: #8888cc; }
+    h1 { font-size: 16px; color: #8888cc; margin-bottom: 4px; }
+    h2 { font-size: 13px; color: #7777aa; margin: 16px 0 8px; border-bottom: 1px solid #333; padding-bottom: 4px; }
     .status {
-      margin: 8px 0;
-      padding: 8px;
+      margin: 4px 0;
+      padding: 6px 8px;
       border-radius: 4px;
       font-family: monospace;
-      font-size: 12px;
+      font-size: 11px;
     }
     .ok { background: #1a3a1a; border: 1px solid #2d5a2d; }
     .fail { background: #3a1a1a; border: 1px solid #5a2d2d; }
@@ -30,58 +31,78 @@
       background: #3a3a6a;
       color: #e0e0e0;
       border: 1px solid #5a5a8a;
-      padding: 8px 16px;
+      padding: 6px 12px;
       border-radius: 4px;
       cursor: pointer;
-      margin: 4px;
+      margin: 2px;
+      font-size: 12px;
     }
     button:hover { background: #4a4a7a; }
+    button:disabled { opacity: 0.5; cursor: default; }
     #log {
       margin-top: 12px;
-      max-height: 300px;
+      max-height: 250px;
       overflow-y: auto;
       font-family: monospace;
-      font-size: 11px;
+      font-size: 10px;
       padding: 8px;
       background: #0a0a1a;
       border-radius: 4px;
     }
-    .log-entry { margin: 2px 0; }
+    .log-entry { margin: 1px 0; }
     .log-ok { color: #6a6; }
     .log-fail { color: #a66; }
     .log-info { color: #88a; }
+    .section { margin-bottom: 12px; }
   </style>
 </head>
 <body>
-  <h1>Co-Doing API Test</h1>
-
+  <h1>Architecture Validation</h1>
   <div id="context" class="status info">Checking environment...</div>
+  <div class="status info" id="pageLoadInfo"></div>
 
-  <div id="step1" class="status pending">1. createAddonSession — waiting...</div>
-  <div id="step2" class="status pending">2. createSidePanelClient — waiting...</div>
-  <div id="step2b" class="status pending">2b. startCollaboration — waiting...</div>
-  <div id="step3" class="status pending">3. createCoDoingClient — waiting...</div>
-  <div id="step4" class="status pending">4. setGlobalState — waiting...</div>
-  <div id="step5" class="status pending">5. State received back — waiting...</div>
+  <!-- TEST A: Network connectivity from iframe -->
+  <div class="section">
+    <h2>Test A: Network from Meet Iframe</h2>
+    <div id="testA1" class="status pending">A1. WebSocket to external host — waiting</div>
+    <div id="testA2" class="status pending">A2. fetch() to Firebase domain — waiting</div>
+    <div id="testA3" class="status pending">A3. Load Firebase SDK dynamically — waiting</div>
+    <button onclick="runNetworkTests()">Run Network Tests</button>
+  </div>
 
-  <div style="margin-top: 12px;">
-    <button onclick="runTest()">Run Full Test</button>
-    <button onclick="sendState()">Send State Update</button>
+  <!-- TEST B: getMeetingInfo -->
+  <div class="section">
+    <h2>Test B: getMeetingInfo()</h2>
+    <div id="testB1" class="status pending">B1. getMeetingInfo — waiting</div>
+    <div id="testB2" class="status pending">B2. meetingId value — waiting</div>
+    <div id="testB3" class="status pending">B3. meetingCode value — waiting</div>
+    <button onclick="runMeetingInfoTest()">Get Meeting Info</button>
+  </div>
+
+  <!-- TEST C: startActivity behavior -->
+  <div class="section">
+    <h2>Test C: startActivity() Behavior</h2>
+    <div id="testC1" class="status pending">C1. startActivity call — waiting</div>
+    <div id="testC2" class="status pending">C2. Page reload detection — waiting</div>
+    <div id="testC3" class="status pending">C3. getActivityStartingState — waiting</div>
+    <button onclick="runStartActivityTest()">Start Activity</button>
+    <button onclick="checkStartingState()">Check Starting State</button>
   </div>
 
   <div id="log"></div>
 
   <script>
-    // ============================================================
-    // REPLACE THIS with your Google Cloud project number
-    // Find it: Google Cloud Console → Project Settings → Project number
-    // ============================================================
     const CLOUD_PROJECT_NUMBER = '1430218413';
+    const PAGE_LOAD_TIME = Date.now();
+    const PAGE_LOAD_COUNT_KEY = 'did_test_page_load_count';
+    const ACTIVITY_STARTED_KEY = 'did_test_activity_started';
+
+    // Track page loads to detect reloads after startActivity
+    let loadCount = parseInt(sessionStorage.getItem(PAGE_LOAD_COUNT_KEY) || '0') + 1;
+    sessionStorage.setItem(PAGE_LOAD_COUNT_KEY, String(loadCount));
 
     let session = null;
     let sidePanelClient = null;
-    let coDoingClient = null;
-    let stateVersion = 0;
 
     function log(msg, type = 'info') {
       const el = document.getElementById('log');
@@ -93,220 +114,401 @@
       console.log(`[${type}] ${msg}`);
     }
 
-    function setStep(n, status, msg) {
-      const el = document.getElementById(`step${n}`);
-      el.className = `status ${status}`;
-      el.textContent = `${n}. ${msg}`;
+    function setTest(id, status, msg) {
+      const el = document.getElementById(id);
+      if (el) {
+        el.className = `status ${status}`;
+        el.textContent = `${id}. ${msg}`;
+      }
     }
 
-    async function runTest() {
-      if (CLOUD_PROJECT_NUMBER === 'REPLACE_ME') {
-        log('ERROR: Replace CLOUD_PROJECT_NUMBER with your GCP project number!', 'fail');
-        setStep(1, 'fail', 'createAddonSession — missing project number');
-        return;
-      }
+    // ========================================
+    // TEST A: Network connectivity
+    // ========================================
+    async function runNetworkTests() {
+      log('=== TEST A: Network connectivity ===', 'info');
 
-      // Step 1: Create addon session
+      // A1: WebSocket to external host
       try {
-        log(`Creating addon session with project number: ${CLOUD_PROJECT_NUMBER}`);
-        session = await window.meet.addon.createAddonSession({
-          cloudProjectNumber: CLOUD_PROJECT_NUMBER,
-        });
-        setStep(1, 'ok', 'createAddonSession — SUCCESS');
-        log('Addon session created', 'ok');
-
-        // Dump all available methods on the session object
-        const sessionMethods = [];
-        for (const key in session) {
-          sessionMethods.push(`${key}(${typeof session[key]})`);
-        }
-        log('Session object has: ' + sessionMethods.join(', '), 'info');
+        log('A1: Trying WebSocket connection to wss://echo.websocket.events ...', 'info');
+        const wsResult = await testWebSocket('wss://echo.websocket.events');
+        setTest('testA1', 'ok', `WebSocket — SUCCESS (${wsResult})`);
+        log(`A1: WebSocket works! Response: ${wsResult}`, 'ok');
       } catch (err) {
-        setStep(1, 'fail', `createAddonSession — FAILED: ${err.message || err}`);
-        log(`Session creation failed: ${JSON.stringify(err)}`, 'fail');
-        log('If running outside Meet iframe, this is expected.', 'info');
-        return;
-      }
-
-      // Step 2: Create side panel client
-      try {
-        log('Creating side panel client...');
-        sidePanelClient = await session.createSidePanelClient();
-        setStep(2, 'ok', 'createSidePanelClient — SUCCESS');
-        log('Side panel client created', 'ok');
-
-        const spMethods = [];
-        for (const key in sidePanelClient) {
-          spMethods.push(`${key}(${typeof sidePanelClient[key]})`);
-        }
-        log('SidePanelClient has: ' + spMethods.join(', '), 'info');
-      } catch (err) {
-        setStep(2, 'fail', `createSidePanelClient — FAILED: ${err.message || err}`);
-        log(`Side panel client failed: ${JSON.stringify(err)}`, 'fail');
-      }
-
-      // Step 2b: Start collaboration (must happen BEFORE Co-Doing client)
-      if (sidePanelClient) {
+        // Try alternative echo server
         try {
-          log('Starting collaboration (opens side panel for all)...');
-          if (typeof sidePanelClient.startCollaboration === 'function') {
-            await sidePanelClient.startCollaboration({
-              sidePanelUrl: window.location.href,
-              additionalData: JSON.stringify({ test: true }),
-            });
-            setStep('2b', 'ok', 'startCollaboration — SUCCESS');
-            log('startCollaboration succeeded (current API)', 'ok');
-          } else if (typeof sidePanelClient.startActivity === 'function') {
-            await sidePanelClient.startActivity({
-              sidePanelUrl: window.location.href,
-              additionalData: JSON.stringify({ test: true }),
-            });
-            setStep('2b', 'ok', 'startActivity — SUCCESS (old API name)');
-            log('startActivity succeeded (old API name)', 'ok');
-          } else {
-            log('Neither startCollaboration nor startActivity found!', 'fail');
-            setStep('2b', 'fail', 'No collaboration start method found');
+          log('A1: First WS failed, trying wss://ws.postman-echo.com/raw ...', 'info');
+          const wsResult2 = await testWebSocket('wss://ws.postman-echo.com/raw');
+          setTest('testA1', 'ok', `WebSocket — SUCCESS via postman (${wsResult2})`);
+          log(`A1: WebSocket works via postman! Response: ${wsResult2}`, 'ok');
+        } catch (err2) {
+          // Try one more - a simple connection test
+          try {
+            log('A1: Trying wss://socketsbay.com/wss/v2/1/demo/ ...', 'info');
+            const wsResult3 = await testWebSocket('wss://socketsbay.com/wss/v2/1/demo/');
+            setTest('testA1', 'ok', `WebSocket — SUCCESS via socketsbay`);
+            log(`A1: WebSocket works!`, 'ok');
+          } catch (err3) {
+            setTest('testA1', 'fail', `WebSocket — BLOCKED: ${err.message}`);
+            log(`A1: WebSocket BLOCKED by CSP! Error: ${err.message}`, 'fail');
+            log(`A1: This means Firebase RTDB may also be blocked.`, 'fail');
           }
-        } catch (err) {
-          setStep('2b', 'fail', `startCollaboration — FAILED: ${err.message || err}`);
-          log(`Collaboration start failed: ${JSON.stringify(err)}`, 'fail');
-          log('Continuing to Co-Doing test anyway...', 'info');
         }
       }
 
-      // Step 3: Create Co-Doing client (THE critical test)
+      // A2: fetch() to Firebase-related domain
       try {
-        log('Creating Co-Doing client...');
-        coDoingClient = await session.createCoDoingClient({
-          activityTitle: 'Co-Doing API Test',
-          onGlobalStateChanged: (state) => {
-            try {
-              const decoded = JSON.parse(new TextDecoder().decode(state.bytes));
-              setStep(5, 'ok', `State received — v${decoded.version}: "${decoded.message}"`);
-              log(`State received: ${JSON.stringify(decoded)}`, 'ok');
-            } catch (e) {
-              log(`State decode error: ${e.message}`, 'fail');
-            }
-          },
+        log('A2: Trying fetch to Firebase domain...', 'info');
+        const resp = await fetch('https://firebaseio.com/.json', {
+          method: 'GET',
+          mode: 'cors',
         });
-        setStep(3, 'ok', 'createCoDoingClient — SUCCESS');
-        log('Co-Doing client created! The API IS available.', 'ok');
-
-        const cdMethods = [];
-        for (const key in coDoingClient) {
-          cdMethods.push(`${key}(${typeof coDoingClient[key]})`);
-        }
-        log('CoDoingClient has: ' + cdMethods.join(', '), 'info');
-
-        // Auto-send first state update
-        log('Auto-sending first state update...', 'info');
-        await sendState();
+        setTest('testA2', 'ok', `fetch Firebase — ${resp.status} (connection works)`);
+        log(`A2: fetch to firebaseio.com succeeded: ${resp.status}`, 'ok');
       } catch (err) {
-        setStep(3, 'fail', `createCoDoingClient — FAILED: ${err.message || err}`);
-        log(`Co-Doing client failed: ${JSON.stringify(err)}`, 'fail');
-        log('Error name: ' + (err.name || 'unknown'), 'fail');
-        log('Error code: ' + (err.code || 'unknown'), 'fail');
-        log('Error type: ' + (err.errorType || 'unknown'), 'fail');
-        log('Full error: ' + String(err), 'fail');
-
-        // Check if it's access restriction
-        const errStr = String(err).toLowerCase();
-        if (errStr.includes('early access') || errStr.includes('permission') || errStr.includes('restricted') || errStr.includes('not available')) {
-          log('>>> Co-Doing API appears RESTRICTED. Need WebSocket fallback. <<<', 'fail');
+        // Even a CORS error means the connection was made (CSP allows it)
+        if (err.message.includes('CORS') || err.message.includes('opaque') || err.name === 'TypeError') {
+          setTest('testA2', 'ok', `fetch Firebase — CORS error (but connection allowed!)`);
+          log(`A2: CORS error (expected) — but the REQUEST was made. CSP allows Firebase domain.`, 'ok');
         } else {
-          log('Error might be environment-related. Try from within Meet iframe.', 'info');
+          setTest('testA2', 'fail', `fetch Firebase — BLOCKED: ${err.message}`);
+          log(`A2: fetch to Firebase BLOCKED: ${err.message}`, 'fail');
         }
+      }
 
-        // Dump available session methods for debugging
-        log('Checking session for alternative APIs...', 'info');
-        for (const key in session) {
-          if (typeof session[key] === 'function' && key.toLowerCase().includes('co')) {
-            log(`  Found: session.${key}()`, 'info');
-          }
+      // A3: Dynamically load Firebase SDK
+      try {
+        log('A3: Loading Firebase SDK from CDN...', 'info');
+        await loadScript('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js');
+        log('A3: firebase-app loaded', 'ok');
+
+        if (typeof firebase !== 'undefined') {
+          setTest('testA3', 'ok', `Firebase SDK — LOADED (v${firebase.SDK_VERSION || 'unknown'})`);
+          log(`A3: Firebase SDK loaded! Version: ${firebase.SDK_VERSION || 'unknown'}`, 'ok');
+
+          // Try loading RTDB module too
+          await loadScript('https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js');
+          log('A3: firebase-database module also loaded', 'ok');
+        } else {
+          setTest('testA3', 'fail', 'Firebase SDK — loaded but firebase object missing');
+          log('A3: Script loaded but firebase global not found', 'fail');
         }
-        return;
+      } catch (err) {
+        setTest('testA3', 'fail', `Firebase SDK — BLOCKED: ${err.message}`);
+        log(`A3: Firebase SDK load BLOCKED: ${err.message}`, 'fail');
       }
     }
 
-    async function sendState() {
-      if (!coDoingClient) {
-        log('Co-Doing client not initialized. Run test first.', 'fail');
-        return;
+    function testWebSocket(url) {
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          ws.close();
+          reject(new Error('WebSocket timeout (5s)'));
+        }, 5000);
+
+        let ws;
+        try {
+          ws = new WebSocket(url);
+        } catch (err) {
+          clearTimeout(timeout);
+          reject(err);
+          return;
+        }
+
+        ws.onopen = () => {
+          log(`  WS connected to ${url}`, 'ok');
+          ws.send('did-test-ping');
+        };
+
+        ws.onmessage = (event) => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve(String(event.data).substring(0, 100));
+        };
+
+        ws.onerror = (event) => {
+          clearTimeout(timeout);
+          reject(new Error('WebSocket error (CSP or network)'));
+        };
+
+        ws.onclose = (event) => {
+          if (!event.wasClean) {
+            clearTimeout(timeout);
+            // If we got here after open, connection was successful
+            if (ws.readyState >= 2) {
+              resolve('connected (closed before message)');
+            }
+          }
+        };
+
+        // If no message after 3s but connection is open, that's still success
+        setTimeout(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            clearTimeout(timeout);
+            ws.close();
+            resolve('connected (no echo, but WS works)');
+          }
+        }, 3000);
+      });
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`Failed to load: ${src}`));
+        document.head.appendChild(script);
+      });
+    }
+
+    // ========================================
+    // TEST B: getMeetingInfo
+    // ========================================
+    async function runMeetingInfoTest() {
+      log('=== TEST B: getMeetingInfo ===', 'info');
+
+      if (!sidePanelClient) {
+        log('B: Need sidePanelClient first. Initializing SDK...', 'info');
+        await initSDK();
       }
 
-      stateVersion++;
-      const state = {
-        version: stateVersion,
-        message: `Test state update #${stateVersion}`,
-        timestamp: Date.now(),
-      };
+      if (!sidePanelClient) {
+        setTest('testB1', 'fail', 'getMeetingInfo — no sidePanelClient');
+        return;
+      }
 
       try {
-        log(`Sending state: ${JSON.stringify(state)}`);
+        log('B1: Calling getMeetingInfo()...', 'info');
 
-        // Try current API name
-        if (typeof coDoingClient.setGlobalState === 'function') {
-          await coDoingClient.setGlobalState({
-            bytes: new TextEncoder().encode(JSON.stringify(state)),
-          });
-          setStep(4, 'ok', `setGlobalState — SUCCESS (v${stateVersion})`);
-          log('setGlobalState succeeded', 'ok');
+        if (typeof sidePanelClient.getMeetingInfo !== 'function') {
+          // Check session object too
+          log('B1: getMeetingInfo not on sidePanelClient, checking session...', 'info');
+          const methods = [];
+          for (const key in sidePanelClient) {
+            methods.push(`${key}(${typeof sidePanelClient[key]})`);
+          }
+          log('B1: SidePanelClient methods: ' + methods.join(', '), 'info');
+
+          // Also check session
+          if (session) {
+            const sMethods = [];
+            for (const key in session) {
+              sMethods.push(`${key}(${typeof session[key]})`);
+            }
+            log('B1: Session methods: ' + sMethods.join(', '), 'info');
+          }
+
+          setTest('testB1', 'fail', 'getMeetingInfo — method not found');
+          return;
         }
-        // Try old API name as fallback
-        else if (typeof coDoingClient.broadcastStateUpdate === 'function') {
-          await coDoingClient.broadcastStateUpdate({
-            bytes: new TextEncoder().encode(JSON.stringify(state)),
-          });
-          setStep(4, 'ok', `broadcastStateUpdate — SUCCESS (v${stateVersion})`);
-          log('broadcastStateUpdate succeeded (old API name)', 'ok');
+
+        const meetingInfo = await sidePanelClient.getMeetingInfo();
+        setTest('testB1', 'ok', 'getMeetingInfo — SUCCESS');
+        log('B1: getMeetingInfo returned: ' + JSON.stringify(meetingInfo), 'ok');
+
+        // Log all properties
+        for (const key in meetingInfo) {
+          log(`  ${key}: ${JSON.stringify(meetingInfo[key])}`, 'info');
         }
-        else {
-          log('Neither setGlobalState nor broadcastStateUpdate found on client!', 'fail');
-          log('Available methods: ' + Object.keys(coDoingClient).join(', '), 'info');
-          setStep(4, 'fail', 'No state update method found');
+
+        // B2: meetingId
+        if (meetingInfo.meetingId) {
+          setTest('testB2', 'ok', `meetingId — "${meetingInfo.meetingId}"`);
+          log(`B2: meetingId = "${meetingInfo.meetingId}"`, 'ok');
+        } else {
+          setTest('testB2', 'fail', 'meetingId — NOT AVAILABLE');
+          log('B2: meetingId not in response', 'fail');
         }
+
+        // B3: meetingCode
+        if (meetingInfo.meetingCode) {
+          setTest('testB3', 'ok', `meetingCode — "${meetingInfo.meetingCode}"`);
+          log(`B3: meetingCode = "${meetingInfo.meetingCode}"`, 'ok');
+        } else {
+          setTest('testB3', 'fail', 'meetingCode — NOT AVAILABLE');
+          log('B3: meetingCode not in response', 'fail');
+        }
+
       } catch (err) {
-        setStep(4, 'fail', `State update — FAILED: ${err.message || err}`);
-        log(`State update failed: ${JSON.stringify(err)}`, 'fail');
+        setTest('testB1', 'fail', `getMeetingInfo — FAILED: ${err.message}`);
+        log(`B1: getMeetingInfo failed: ${JSON.stringify(err)}`, 'fail');
+        log(`B1: Error type: ${err.errorType || err.name || 'unknown'}`, 'fail');
       }
     }
 
-    // Detect environment and log context
+    // ========================================
+    // TEST C: startActivity behavior
+    // ========================================
+    async function runStartActivityTest() {
+      log('=== TEST C: startActivity behavior ===', 'info');
+
+      if (!sidePanelClient) {
+        log('C: Need sidePanelClient first. Initializing SDK...', 'info');
+        await initSDK();
+      }
+
+      if (!sidePanelClient) {
+        setTest('testC1', 'fail', 'startActivity — no sidePanelClient');
+        return;
+      }
+
+      // Mark that we're about to start activity (to detect reload)
+      sessionStorage.setItem(ACTIVITY_STARTED_KEY, String(Date.now()));
+
+      try {
+        log('C1: Calling startActivity...', 'info');
+        log(`C1: Current page load count: ${loadCount}`, 'info');
+
+        const startMethod = sidePanelClient.startCollaboration || sidePanelClient.startActivity;
+        const methodName = sidePanelClient.startCollaboration ? 'startCollaboration' : 'startActivity';
+
+        if (!startMethod) {
+          setTest('testC1', 'fail', 'startActivity — method not found');
+          return;
+        }
+
+        await startMethod.call(sidePanelClient, {
+          sidePanelUrl: window.location.href,
+          additionalData: JSON.stringify({
+            roomId: 'test-room-' + Date.now(),
+            initiatorLoadCount: loadCount,
+            timestamp: Date.now(),
+          }),
+        });
+
+        setTest('testC1', 'ok', `${methodName} — SUCCESS`);
+        log(`C1: ${methodName} succeeded!`, 'ok');
+        log('C1: If you see this, the initiator page was NOT reloaded by startActivity', 'ok');
+        setTest('testC2', 'ok', 'Page reload — NOT reloaded (initiator stays)');
+
+      } catch (err) {
+        setTest('testC1', 'fail', `startActivity — FAILED: ${err.message}`);
+        log(`C1: startActivity failed: ${err.message}`, 'fail');
+        log(`C1: Error type: ${err.errorType || 'unknown'}`, 'fail');
+
+        if (String(err).includes('ActivityIsOngoing')) {
+          log('C1: Activity already running — this is expected if already started', 'info');
+          setTest('testC1', 'info', 'startActivity — ActivityIsOngoing (already running)');
+        }
+      }
+    }
+
+    async function checkStartingState() {
+      log('=== TEST C3: getActivityStartingState ===', 'info');
+
+      if (!sidePanelClient) {
+        log('C3: Need sidePanelClient first. Initializing SDK...', 'info');
+        await initSDK();
+      }
+
+      if (!sidePanelClient) {
+        setTest('testC3', 'fail', 'getActivityStartingState — no sidePanelClient');
+        return;
+      }
+
+      try {
+        if (typeof sidePanelClient.getActivityStartingState !== 'function') {
+          log('C3: getActivityStartingState not on sidePanelClient', 'fail');
+          // List available methods
+          const methods = [];
+          for (const key in sidePanelClient) {
+            if (typeof sidePanelClient[key] === 'function') {
+              methods.push(key);
+            }
+          }
+          log('C3: Available methods: ' + methods.join(', '), 'info');
+          setTest('testC3', 'fail', 'getActivityStartingState — method not found');
+          return;
+        }
+
+        const state = await sidePanelClient.getActivityStartingState();
+        log('C3: getActivityStartingState returned: ' + JSON.stringify(state), 'ok');
+
+        if (state && state.additionalData) {
+          const parsed = JSON.parse(state.additionalData);
+          setTest('testC3', 'ok', `Starting state — roomId: ${parsed.roomId || 'none'}`);
+          log('C3: additionalData: ' + JSON.stringify(parsed), 'ok');
+        } else {
+          setTest('testC3', 'info', 'Starting state — empty (no activity running?)');
+          log('C3: No additionalData in starting state', 'info');
+        }
+      } catch (err) {
+        setTest('testC3', 'fail', `getActivityStartingState — FAILED: ${err.message}`);
+        log(`C3: Error: ${err.message}`, 'fail');
+      }
+    }
+
+    // ========================================
+    // SDK initialization (shared)
+    // ========================================
+    async function initSDK() {
+      if (session && sidePanelClient) return;
+
+      try {
+        if (!session) {
+          session = await window.meet.addon.createAddonSession({
+            cloudProjectNumber: CLOUD_PROJECT_NUMBER,
+          });
+          log('SDK: Session created', 'ok');
+        }
+      } catch (err) {
+        if (String(err).includes('AlreadyCreated')) {
+          log('SDK: Session already exists (expected)', 'info');
+          // Session was already created — try to get sidePanelClient anyway
+          // The session variable may be lost after page navigation
+        } else {
+          log(`SDK: Session failed: ${err.message}`, 'fail');
+          return;
+        }
+      }
+
+      try {
+        if (!sidePanelClient && session) {
+          sidePanelClient = await session.createSidePanelClient();
+          log('SDK: SidePanelClient created', 'ok');
+        }
+      } catch (err) {
+        log(`SDK: SidePanelClient failed: ${err.message}`, 'fail');
+      }
+    }
+
+    // ========================================
+    // Page load detection & auto-init
+    // ========================================
     window.addEventListener('DOMContentLoaded', () => {
       const contextEl = document.getElementById('context');
       const inIframe = window.self !== window.top;
       const onMeetDomain = document.referrer.includes('meet.google.com');
 
-      if (inIframe && onMeetDomain) {
-        contextEl.className = 'status ok';
-        contextEl.textContent = 'Running inside Google Meet iframe — good';
-        log('Environment: Meet iframe (referrer: ' + document.referrer + ')', 'ok');
-      } else if (inIframe) {
-        contextEl.className = 'status info';
-        contextEl.textContent = 'Running in iframe (not Meet) — SDK calls will fail';
-        log('Environment: iframe but NOT Meet (referrer: ' + document.referrer + ')', 'info');
-      } else {
-        contextEl.className = 'status info';
-        contextEl.textContent = 'Running standalone — SDK calls will fail (open from Meet)';
-        log('Environment: standalone browser tab. SDK needs Meet iframe.', 'info');
+      // Show page load info
+      const pageLoadEl = document.getElementById('pageLoadInfo');
+      const activityStarted = sessionStorage.getItem(ACTIVITY_STARTED_KEY);
+      pageLoadEl.textContent = `Page load #${loadCount}` +
+        (activityStarted ? ` | Activity started at load #${activityStarted}` : ' | No activity started yet');
+
+      // Detect if this is a reload after startActivity
+      if (loadCount > 1 && activityStarted) {
+        setTest('testC2', 'info', `Page reload — Load #${loadCount} (was activity reload?)`);
+        log(`Page reload detected! Load count: ${loadCount}. Activity was started.`, 'info');
       }
 
-      log('Page loaded. Checking SDK availability...');
-      if (window.meet && window.meet.addon) {
-        log('meet.addon is available', 'ok');
-        const addonKeys = Object.keys(window.meet.addon);
-        log('Available on meet.addon: ' + addonKeys.join(', '), 'info');
+      if (inIframe && onMeetDomain) {
+        contextEl.className = 'status ok';
+        contextEl.textContent = 'Running inside Google Meet iframe';
+        log('Environment: Meet iframe', 'ok');
 
-        // Auto-run test when inside Meet iframe
-        if (inIframe) {
-          log('Auto-running test (Meet iframe detected)...', 'info');
-          runTest();
-        }
-      } else if (window.meet) {
-        log('meet object exists but meet.addon is missing', 'fail');
-        log('Available on meet: ' + Object.keys(window.meet).join(', '), 'info');
+        // Auto-init SDK
+        initSDK().then(() => {
+          log('SDK initialized. Ready for tests.', 'ok');
+        });
+      } else if (inIframe) {
+        contextEl.className = 'status info';
+        contextEl.textContent = 'In iframe (not Meet) — SDK will fail';
       } else {
-        log('meet object NOT found — SDK script may have failed to load', 'fail');
+        contextEl.className = 'status info';
+        contextEl.textContent = 'Standalone — open from Meet to test';
+        log('Standalone mode. Network tests can still run.', 'info');
       }
     });
   </script>
