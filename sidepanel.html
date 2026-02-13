@@ -94,12 +94,19 @@
   <script>
     const CLOUD_PROJECT_NUMBER = '1430218413';
     const PAGE_LOAD_TIME = Date.now();
-    const PAGE_LOAD_COUNT_KEY = 'did_test_page_load_count';
-    const ACTIVITY_STARTED_KEY = 'did_test_activity_started';
 
-    // Track page loads to detect reloads after startActivity
-    let loadCount = parseInt(sessionStorage.getItem(PAGE_LOAD_COUNT_KEY) || '0') + 1;
-    sessionStorage.setItem(PAGE_LOAD_COUNT_KEY, String(loadCount));
+    // Safe storage access (cross-origin iframes block sessionStorage)
+    let loadCount = 1;
+    function safeGet(key) {
+      try { return sessionStorage.getItem(key); } catch(e) { return null; }
+    }
+    function safeSet(key, val) {
+      try { sessionStorage.setItem(key, val); } catch(e) { /* ignore */ }
+    }
+    try {
+      loadCount = parseInt(safeGet('did_load_count') || '0') + 1;
+      safeSet('did_load_count', String(loadCount));
+    } catch(e) { /* iframe storage blocked */ }
 
     let session = null;
     let sidePanelClient = null;
@@ -354,7 +361,7 @@
       }
 
       // Mark that we're about to start activity (to detect reload)
-      sessionStorage.setItem(ACTIVITY_STARTED_KEY, String(Date.now()));
+      safeSet('did_activity_started', String(Date.now()));
 
       try {
         log('C1: Calling startActivity...', 'info');
@@ -483,7 +490,7 @@
 
       // Show page load info
       const pageLoadEl = document.getElementById('pageLoadInfo');
-      const activityStarted = sessionStorage.getItem(ACTIVITY_STARTED_KEY);
+      const activityStarted = safeGet('did_activity_started');
       pageLoadEl.textContent = `Page load #${loadCount}` +
         (activityStarted ? ` | Activity started at load #${activityStarted}` : ' | No activity started yet');
 
