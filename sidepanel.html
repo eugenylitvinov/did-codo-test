@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Co-Doing API Test</title>
+  <script src="https://www.gstatic.com/meetjs/addons/1.2.0/meet.addons.js"></script>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+      margin: 0;
+      font-size: 14px;
+    }
+    h1 { font-size: 16px; color: #8888cc; }
+    .status {
+      margin: 8px 0;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .ok { background: #1a3a1a; border: 1px solid #2d5a2d; }
+    .fail { background: #3a1a1a; border: 1px solid #5a2d2d; }
+    .pending { background: #2a2a1a; border: 1px solid #4a4a2d; }
+    .info { background: #1a2a3a; border: 1px solid #2d4a5a; }
+    button {
+      background: #3a3a6a;
+      color: #e0e0e0;
+      border: 1px solid #5a5a8a;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 4px;
+    }
+    button:hover { background: #4a4a7a; }
+    #log {
+      margin-top: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      background: #0a0a1a;
+      border-radius: 4px;
+    }
+    .log-entry { margin: 2px 0; }
+    .log-ok { color: #6a6; }
+    .log-fail { color: #a66; }
+    .log-info { color: #88a; }
+  </style>
+</head>
+<body>
+  <h1>Co-Doing API Test</h1>
+
+  <div id="context" class="status info">Checking environment...</div>
+
+  <div id="step1" class="status pending">1. createAddonSession — waiting...</div>
+  <div id="step2" class="status pending">2. createSidePanelClient — waiting...</div>
+  <div id="step2b" class="status pending">2b. startCollaboration — waiting...</div>
+  <div id="step3" class="status pending">3. createCoDoingClient — waiting...</div>
+  <div id="step4" class="status pending">4. setGlobalState — waiting...</div>
+  <div id="step5" class="status pending">5. State received back — waiting...</div>
+
+  <div style="margin-top: 12px;">
+    <button onclick="runTest()">Run Full Test</button>
+    <button onclick="sendState()">Send State Update</button>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    // ============================================================
+    // REPLACE THIS with your Google Cloud project number
+    // Find it: Google Cloud Console → Project Settings → Project number
+    // ============================================================
+    const CLOUD_PROJECT_NUMBER = '1430218413';
+
+    let session = null;
+    let sidePanelClient = null;
+    let coDoingClient = null;
+    let stateVersion = 0;
+
+    function log(msg, type = 'info') {
+      const el = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry log-${type}`;
+      entry.textContent = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
+      el.appendChild(entry);
+      el.scrollTop = el.scrollHeight;
+      console.log(`[${type}] ${msg}`);
+    }
+
+    function setStep(n, status, msg) {
+      const el = document.getElementById(`step${n}`);
+      el.className = `status ${status}`;
+      el.textContent = `${n}. ${msg}`;
+    }
+
+    async function runTest() {
+      if (CLOUD_PROJECT_NUMBER === 'REPLACE_ME') {
+        log('ERROR: Replace CLOUD_PROJECT_NUMBER with your GCP project number!', 'fail');
+        setStep(1, 'fail', 'createAddonSession — missing project number');
+        return;
+      }
+
+      // Step 1: Create addon session
+      try {
+        log(`Creating addon session with project number: ${CLOUD_PROJECT_NUMBER}`);
+        session = await window.meet.addon.createAddonSession({
+          cloudProjectNumber: CLOUD_PROJECT_NUMBER,
+        });
+        setStep(1, 'ok', 'createAddonSession — SUCCESS');
+        log('Addon session created', 'ok');
+
+        // Dump all available methods on the session object
+        const sessionMethods = [];
+        for (const key in session) {
+          sessionMethods.push(`${key}(${typeof session[key]})`);
+        }
+        log('Session object has: ' + sessionMethods.join(', '), 'info');
+      } catch (err) {
+        setStep(1, 'fail', `createAddonSession — FAILED: ${err.message || err}`);
+        log(`Session creation failed: ${JSON.stringify(err)}`, 'fail');
+        log('If running outside Meet iframe, this is expected.', 'info');
+        return;
+      }
+
+      // Step 2: Create side panel client
+      try {
+        log('Creating side panel client...');
+        sidePanelClient = await session.createSidePanelClient();
+        setStep(2, 'ok', 'createSidePanelClient — SUCCESS');
+        log('Side panel client created', 'ok');
+
+        const spMethods = [];
+        for (const key in sidePanelClient) {
+          spMethods.push(`${key}(${typeof sidePanelClient[key]})`);
+        }
+        log('SidePanelClient has: ' + spMethods.join(', '), 'info');
+      } catch (err) {
+        setStep(2, 'fail', `createSidePanelClient — FAILED: ${err.message || err}`);
+        log(`Side panel client failed: ${JSON.stringify(err)}`, 'fail');
+      }
+
+      // Step 2b: Start collaboration (must happen BEFORE Co-Doing client)
+      if (sidePanelClient) {
+        try {
+          log('Starting collaboration (opens side panel for all)...');
+          if (typeof sidePanelClient.startCollaboration === 'function') {
+            await sidePanelClient.startCollaboration({
+              sidePanelUrl: window.location.href,
+              additionalData: JSON.stringify({ test: true }),
+            });
+            setStep('2b', 'ok', 'startCollaboration — SUCCESS');
+            log('startCollaboration succeeded (current API)', 'ok');
+          } else if (typeof sidePanelClient.startActivity === 'function') {
+            await sidePanelClient.startActivity({
+              sidePanelUrl: window.location.href,
+              additionalData: JSON.stringify({ test: true }),
+            });
+            setStep('2b', 'ok', 'startActivity — SUCCESS (old API name)');
+            log('startActivity succeeded (old API name)', 'ok');
+          } else {
+            log('Neither startCollaboration nor startActivity found!', 'fail');
+            setStep('2b', 'fail', 'No collaboration start method found');
+          }
+        } catch (err) {
+          setStep('2b', 'fail', `startCollaboration — FAILED: ${err.message || err}`);
+          log(`Collaboration start failed: ${JSON.stringify(err)}`, 'fail');
+          log('Continuing to Co-Doing test anyway...', 'info');
+        }
+      }
+
+      // Step 3: Create Co-Doing client (THE critical test)
+      try {
+        log('Creating Co-Doing client...');
+        coDoingClient = await session.createCoDoingClient({
+          activityTitle: 'Co-Doing API Test',
+          onGlobalStateChanged: (state) => {
+            try {
+              const decoded = JSON.parse(new TextDecoder().decode(state.bytes));
+              setStep(5, 'ok', `State received — v${decoded.version}: "${decoded.message}"`);
+              log(`State received: ${JSON.stringify(decoded)}`, 'ok');
+            } catch (e) {
+              log(`State decode error: ${e.message}`, 'fail');
+            }
+          },
+        });
+        setStep(3, 'ok', 'createCoDoingClient — SUCCESS');
+        log('Co-Doing client created! The API IS available.', 'ok');
+
+        const cdMethods = [];
+        for (const key in coDoingClient) {
+          cdMethods.push(`${key}(${typeof coDoingClient[key]})`);
+        }
+        log('CoDoingClient has: ' + cdMethods.join(', '), 'info');
+
+        // Auto-send first state update
+        log('Auto-sending first state update...', 'info');
+        await sendState();
+      } catch (err) {
+        setStep(3, 'fail', `createCoDoingClient — FAILED: ${err.message || err}`);
+        log(`Co-Doing client failed: ${JSON.stringify(err)}`, 'fail');
+        log('Error name: ' + (err.name || 'unknown'), 'fail');
+        log('Error code: ' + (err.code || 'unknown'), 'fail');
+        log('Error type: ' + (err.errorType || 'unknown'), 'fail');
+        log('Full error: ' + String(err), 'fail');
+
+        // Check if it's access restriction
+        const errStr = String(err).toLowerCase();
+        if (errStr.includes('early access') || errStr.includes('permission') || errStr.includes('restricted') || errStr.includes('not available')) {
+          log('>>> Co-Doing API appears RESTRICTED. Need WebSocket fallback. <<<', 'fail');
+        } else {
+          log('Error might be environment-related. Try from within Meet iframe.', 'info');
+        }
+
+        // Dump available session methods for debugging
+        log('Checking session for alternative APIs...', 'info');
+        for (const key in session) {
+          if (typeof session[key] === 'function' && key.toLowerCase().includes('co')) {
+            log(`  Found: session.${key}()`, 'info');
+          }
+        }
+        return;
+      }
+    }
+
+    async function sendState() {
+      if (!coDoingClient) {
+        log('Co-Doing client not initialized. Run test first.', 'fail');
+        return;
+      }
+
+      stateVersion++;
+      const state = {
+        version: stateVersion,
+        message: `Test state update #${stateVersion}`,
+        timestamp: Date.now(),
+      };
+
+      try {
+        log(`Sending state: ${JSON.stringify(state)}`);
+
+        // Try current API name
+        if (typeof coDoingClient.setGlobalState === 'function') {
+          await coDoingClient.setGlobalState({
+            bytes: new TextEncoder().encode(JSON.stringify(state)),
+          });
+          setStep(4, 'ok', `setGlobalState — SUCCESS (v${stateVersion})`);
+          log('setGlobalState succeeded', 'ok');
+        }
+        // Try old API name as fallback
+        else if (typeof coDoingClient.broadcastStateUpdate === 'function') {
+          await coDoingClient.broadcastStateUpdate({
+            bytes: new TextEncoder().encode(JSON.stringify(state)),
+          });
+          setStep(4, 'ok', `broadcastStateUpdate — SUCCESS (v${stateVersion})`);
+          log('broadcastStateUpdate succeeded (old API name)', 'ok');
+        }
+        else {
+          log('Neither setGlobalState nor broadcastStateUpdate found on client!', 'fail');
+          log('Available methods: ' + Object.keys(coDoingClient).join(', '), 'info');
+          setStep(4, 'fail', 'No state update method found');
+        }
+      } catch (err) {
+        setStep(4, 'fail', `State update — FAILED: ${err.message || err}`);
+        log(`State update failed: ${JSON.stringify(err)}`, 'fail');
+      }
+    }
+
+    // Detect environment and log context
+    window.addEventListener('DOMContentLoaded', () => {
+      const contextEl = document.getElementById('context');
+      const inIframe = window.self !== window.top;
+      const onMeetDomain = document.referrer.includes('meet.google.com');
+
+      if (inIframe && onMeetDomain) {
+        contextEl.className = 'status ok';
+        contextEl.textContent = 'Running inside Google Meet iframe — good';
+        log('Environment: Meet iframe (referrer: ' + document.referrer + ')', 'ok');
+      } else if (inIframe) {
+        contextEl.className = 'status info';
+        contextEl.textContent = 'Running in iframe (not Meet) — SDK calls will fail';
+        log('Environment: iframe but NOT Meet (referrer: ' + document.referrer + ')', 'info');
+      } else {
+        contextEl.className = 'status info';
+        contextEl.textContent = 'Running standalone — SDK calls will fail (open from Meet)';
+        log('Environment: standalone browser tab. SDK needs Meet iframe.', 'info');
+      }
+
+      log('Page loaded. Checking SDK availability...');
+      if (window.meet && window.meet.addon) {
+        log('meet.addon is available', 'ok');
+        const addonKeys = Object.keys(window.meet.addon);
+        log('Available on meet.addon: ' + addonKeys.join(', '), 'info');
+      } else if (window.meet) {
+        log('meet object exists but meet.addon is missing', 'fail');
+        log('Available on meet: ' + Object.keys(window.meet).join(', '), 'info');
+      } else {
+        log('meet object NOT found — SDK script may have failed to load', 'fail');
+      }
+    });
+  </script>
+</body>
+</html>
