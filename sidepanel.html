@@ -296,6 +296,12 @@
         log('meet.addon is available', 'ok');
         const addonKeys = Object.keys(window.meet.addon);
         log('Available on meet.addon: ' + addonKeys.join(', '), 'info');
+
+        // Auto-run test when inside Meet iframe
+        if (inIframe) {
+          log('Auto-running test (Meet iframe detected)...', 'info');
+          runTest();
+        }
       } else if (window.meet) {
         log('meet object exists but meet.addon is missing', 'fail');
         log('Available on meet: ' + Object.keys(window.meet).join(', '), 'info');
