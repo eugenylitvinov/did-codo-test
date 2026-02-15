@@ -80,6 +80,12 @@
     <button onclick="testMeetingInfo()">Test getMeetingInfo</button>
   </div>
 
+  <h2>Railway WebSocket Server</h2>
+  <div id="stepRW" class="status pending">RW. Railway WS — waiting...</div>
+  <div style="margin-top: 8px;">
+    <button onclick="testRailwayWS()">Test Railway WS</button>
+  </div>
+
   <div id="log"></div>
 
   <script>
@@ -364,6 +370,77 @@
       } catch (err) {
         setStep('stepMI', 'fail', 'MI. FAILED: ' + err.message);
         log('getMeetingInfo error: ' + err.message, 'fail');
+      }
+    }
+
+    // ============================================================
+    // RAILWAY WEBSOCKET SERVER TEST
+    // ============================================================
+    const RAILWAY_WS_URL = 'wss://fortunate-tenderness-production.up.railway.app';
+
+    async function testRailwayWS() {
+      log('=== Railway WebSocket Server Test ===', 'info');
+      setStep('stepRW', 'pending', 'RW. Railway WS — connecting...');
+
+      try {
+        const result = await new Promise(function(resolve, reject) {
+          var timeout = setTimeout(function() { reject(new Error('timeout 8s')); }, 8000);
+          var ws = new WebSocket(RAILWAY_WS_URL);
+
+          ws.onopen = function() {
+            log('Railway WS connected', 'ok');
+
+            // Generate a test room ID (use meetingId if available)
+            var roomId = 'spaces/test-' + Date.now().toString(36);
+            var participantId = 'browser-' + Math.random().toString(36).slice(2, 8);
+
+            ws.send(JSON.stringify({
+              type: 'join',
+              roomId: roomId,
+              participantId: participantId,
+              displayName: 'Browser Test'
+            }));
+          };
+
+          ws.onmessage = function(e) {
+            var msg = JSON.parse(e.data);
+            log('Railway msg: ' + msg.type + ' ' + JSON.stringify(msg).substring(0, 120), 'info');
+
+            if (msg.type === 'joined') {
+              log('Joined room ' + msg.roomId + ' (participants: ' + msg.participantCount + ')', 'ok');
+              // Send a state update
+              ws.send(JSON.stringify({
+                type: 'state_update',
+                state: { phase: 'test', ts: Date.now() },
+                expectedVersion: msg.version
+              }));
+            }
+
+            if (msg.type === 'state_sync') {
+              clearTimeout(timeout);
+              log('State synced! v' + msg.version + ': ' + JSON.stringify(msg.state), 'ok');
+              ws.close();
+              resolve('join + state_sync OK (v' + msg.version + ')');
+            }
+
+            if (msg.type === 'error') {
+              clearTimeout(timeout);
+              ws.close();
+              reject(new Error(msg.error));
+            }
+          };
+
+          ws.onerror = function() {
+            clearTimeout(timeout);
+            reject(new Error('Railway WS connection error'));
+          };
+        });
+
+        setStep('stepRW', 'ok', 'RW. Railway WS — ' + result);
+        log('Railway WebSocket test PASSED', 'ok');
+      } catch (err) {
+        setStep('stepRW', 'fail', 'RW. Railway WS — FAILED: ' + err.message);
+        log('Railway WS failed: ' + err.message, 'fail');
       }
     }
 
